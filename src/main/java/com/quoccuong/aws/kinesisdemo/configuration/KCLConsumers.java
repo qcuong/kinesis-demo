@@ -1,7 +1,11 @@
 package com.quoccuong.aws.kinesisdemo.configuration;
 
+import java.io.*;
 import java.nio.CharBuffer;
 import java.nio.charset.StandardCharsets;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.quoccuong.aws.kinesisdemo.model.CloudWatchLogEvent;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
@@ -22,14 +26,14 @@ import software.amazon.kinesis.lifecycle.events.ShutdownRequestedInput;
 import software.amazon.kinesis.processor.ShardRecordProcessor;
 import software.amazon.kinesis.processor.ShardRecordProcessorFactory;
 
-import java.io.UnsupportedEncodingException;
 import java.util.UUID;
+import java.util.zip.GZIPInputStream;
 
 @Slf4j
 @Service
 public class KCLConsumers {
     final String REGION_DEFAULT = "ap-southeast-2";
-    final String STREAM_NAME_DEFAULT = "RonKDS";
+    final String STREAM_NAME_DEFAULT = "LogAggregationKDS";
     final String WORKER_IDENTIFIER = UUID.randomUUID().toString();
 
     final String APPLICATION_NAME = "kinesis-demo-app";
@@ -75,10 +79,10 @@ public class KCLConsumers {
     }
 
     private static class SampleRecordProcessor implements ShardRecordProcessor {
-
         private static final String SHARD_ID_MDC_KEY = "ShardId";
-
         private String shardId;
+
+        final ObjectMapper objectMapper = new ObjectMapper();
 
         public void initialize(InitializationInput initializationInput) {
             shardId = initializationInput.shardId();
@@ -92,30 +96,27 @@ public class KCLConsumers {
 
         public void processRecords(ProcessRecordsInput processRecordsInput) {
             MDC.put(SHARD_ID_MDC_KEY, shardId);
-            try {
-                log.info("Processing {} record(s)", processRecordsInput.records().size());
-                processRecordsInput.records().forEach(record -> {
-                    var exception = "";
-                    var data = "";
-                    try {
-                        CharBuffer charBuffer = StandardCharsets.US_ASCII.decode(record.data());
-                        data = charBuffer.toString();
-                    } catch (Exception e) {
-                        exception = e.getMessage();
-                    }
-                    log.info("Processing record pk: {} -- Seq: {} -- SubSeq: {} -- Data: {} -- Exception: {}",
+            log.info("Processing {} record(s)", processRecordsInput.records().size());
+            processRecordsInput.records().forEach(record -> {
+                var data = "";
+                try {
+                    byte[] arr = new byte[record.data().remaining()];
+                    record.data().get(arr);
+//                        data = new String(arr);
+                    data = decompressGzipFile(arr);
+                    var logEvent = objectMapper.readValue(data, CloudWatchLogEvent.class);
+
+                    log.info("Processing record pk: {} -- Seq: {} -- SubSeq: {}",
                             record.partitionKey(),
                             record.sequenceNumber(),
-                            record.subSequenceNumber(),
-                            data,
-                            exception);
-                });
-            } catch (Throwable t) {
-                log.error("Caught throwable while processing records. Aborting.");
-                t.printStackTrace();
-            } finally {
-                MDC.remove(SHARD_ID_MDC_KEY);
-            }
+                            record.subSequenceNumber());
+                    log.info("Processing record logEvent: {}",
+                            logEvent);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            });
+            MDC.remove(SHARD_ID_MDC_KEY);
         }
 
         public void leaseLost(LeaseLostInput leaseLostInput) {
@@ -149,6 +150,27 @@ public class KCLConsumers {
             } finally {
                 MDC.remove(SHARD_ID_MDC_KEY);
             }
+        }
+
+        private String decompressGzipFile(byte[] data) {
+            var response = "";
+            ByteArrayOutputStream fos = null;
+            GZIPInputStream gis = null;
+            try {
+                gis = new GZIPInputStream(new ByteArrayInputStream(data));
+                fos = new ByteArrayOutputStream();
+                byte[] buffer = new byte[1024];
+                int len;
+                while ((len = gis.read(buffer)) != -1) {
+                    fos.write(buffer, 0, len);
+                }
+                response = new String(fos.toByteArray());
+                fos.close();
+                gis.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            return response;
         }
     }
 }
