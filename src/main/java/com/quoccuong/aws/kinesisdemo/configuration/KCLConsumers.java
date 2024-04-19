@@ -30,7 +30,6 @@ import java.util.UUID;
 import java.util.zip.GZIPInputStream;
 
 @Slf4j
-@Service
 public class KCLConsumers {
     final String REGION_DEFAULT = "ap-southeast-2";
     final String STREAM_NAME_DEFAULT = "LogAggregationKDS";

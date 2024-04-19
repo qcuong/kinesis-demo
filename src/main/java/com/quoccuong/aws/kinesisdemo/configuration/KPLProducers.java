@@ -16,7 +16,7 @@ import java.util.concurrent.Executors;
 @Service
 public class KPLProducers {
     final String REGION_DEFAULT = "ap-southeast-2";
-    final String STREAM_NAME_DEFAULT = "RonKDS";
+    final String STREAM_NAME_DEFAULT = "ProcessingOrderStream";
     final KinesisProducer kinesisProducer;
 
     public KPLProducers() {
